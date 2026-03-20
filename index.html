@@ -394,6 +394,7 @@ textarea#fb-cfg:focus{outline:none;border-color:var(--accent);}
 
     <div class="s-sec">Data</div>
     <div class="nav-i" id="n-upload" onclick="go('upload')"><span class="ic">⬆</span>Upload Data</div>
+    <div class="nav-i" id="n-manage" onclick="go('manage')"><span class="ic">🗄</span>Manage Data</div>
 
     <div class="s-sec">Reports</div>
     <div class="nav-i" id="n-mttr" onclick="go('mttr')"><span class="ic">📉</span>MTTR / MTBF</div>
@@ -459,6 +460,44 @@ textarea#fb-cfg:focus{outline:none;border-color:var(--accent);}
         <div class="tw"><table class="dt" id="ptbl"><thead><tr><th>Date</th><th>Machine ID</th><th>Code</th><th>Description</th><th>Duration (min)</th><th>Line</th><th>X-Code</th><th>Segment</th></tr></thead><tbody id="ptbody"></tbody></table></div>
       </div>
       <div id="ustats" style="margin-top:1.4rem;display:none"><div class="kg" id="ukg"></div></div>
+    </div>
+
+    <!-- ── MANAGE DATA ── -->
+    <div id="p-manage" class="page" style="display:none">
+      <div class="ph"><div class="bc">Data Management</div><h1>Manage Database</h1><div class="sub">Delete records for specific dates — use this to fix duplicate or wrong data</div></div>
+
+      <!-- Delete by date range -->
+      <div class="cc" style="margin-bottom:1.3rem;border-top:2px solid var(--red)">
+        <h3 style="color:var(--red)">🗑 Delete Data by Date Range</h3>
+        <div class="csub">Permanently deletes all records for the selected dates from Firebase</div>
+        <div style="display:flex;flex-wrap:wrap;gap:.8rem;align-items:flex-end;margin-top:.8rem">
+          <div>
+            <div style="font-size:.7rem;color:var(--text3);margin-bottom:.3rem;text-transform:uppercase;letter-spacing:.08em">From Date</div>
+            <input type="date" class="date-pick" id="del-from" style="font-size:.85rem;padding:.4rem .6rem">
+          </div>
+          <div>
+            <div style="font-size:.7rem;color:var(--text3);margin-bottom:.3rem;text-transform:uppercase;letter-spacing:.08em">To Date</div>
+            <input type="date" class="date-pick" id="del-to" style="font-size:.85rem;padding:.4rem .6rem">
+          </div>
+          <button class="btn-p" style="background:var(--red);color:#fff" onclick="previewDelete()">Preview Records to Delete</button>
+        </div>
+        <div id="del-preview" style="margin-top:1rem;display:none">
+          <div id="del-preview-info" style="font-size:.85rem;color:var(--text2);margin-bottom:.7rem"></div>
+          <div style="display:flex;gap:.6rem;flex-wrap:wrap">
+            <button class="btn-p" style="background:var(--red);color:#fff" id="del-confirm-btn" onclick="confirmDelete()">⚠ Confirm Delete</button>
+            <button class="btn-s" onclick="cancelDelete()">Cancel</button>
+          </div>
+        </div>
+        <div id="del-status" style="margin-top:.8rem"></div>
+      </div>
+
+      <!-- Database summary -->
+      <div class="cc" style="border-top:2px solid var(--accent)">
+        <h3>📊 Database Summary</h3>
+        <div class="csub">All dates currently stored in Firebase</div>
+        <div id="manage-summary" style="margin-top:.8rem"></div>
+        <button class="btn-s" style="margin-top:.8rem" onclick="loadManageSummary()">🔄 Refresh</button>
+      </div>
     </div>
 
     <!-- ── MTTR / MTBF ── -->
@@ -844,7 +883,7 @@ function launch(){
 /* ═══════════════════════════════════════════════
    FILTER HELPER
 ═══════════════════════════════════════════════ */
-const pgRender={'mttr':()=>renderMttr(),'oee':()=>renderOee(),'seg1':()=>renderSeg(1),'seg2':()=>renderSeg(2),'seg3':()=>renderSeg(3),'seg4':()=>renderSeg(4),'critical':()=>renderCritical(),'pareto':()=>renderPareto()};
+const pgRender={'upload':renderUpload,'manage':renderManage,'mttr':()=>renderMttr(),'oee':()=>renderOee(),'seg1':()=>renderSeg(1),'seg2':()=>renderSeg(2),'seg3':()=>renderSeg(3),'seg4':()=>renderSeg(4),'critical':()=>renderCritical(),'pareto':()=>renderPareto()};
 function sf(pg,k,v,el){
   if(k==='preset'){
     const today=todayStr();
@@ -1781,6 +1820,109 @@ async function exportPPT(){
 /* ═══════════════════════════════════════════════
    INIT
 ═══════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════
+   MANAGE DATA PAGE
+═══════════════════════════════════════════════ */
+function renderManage(){loadManageSummary();}
+
+async function loadManageSummary(){
+  const el=document.getElementById('manage-summary');
+  if(!el)return;
+  el.innerHTML='<div style="color:var(--text3);font-size:.82rem">Loading…</div>';
+  try{
+    const snap=await db.collection('production_data').get();
+    const dates={};
+    snap.docs.forEach(d=>{
+      const r=d.data();
+      if(!dates[r.date])dates[r.date]={count:0,occ:0};
+      dates[r.date].count++;
+      dates[r.date].occ+=+(r.occurrences||1);
+    });
+    // Normalize all stored dates for consistent display and sorting
+    const normalizedDates={};
+    Object.keys(dates).forEach(raw=>{
+      const norm=normalizeDate(raw)||raw;
+      if(!normalizedDates[norm])normalizedDates[norm]={count:0,occ:0,raw};
+      normalizedDates[norm].count+=dates[raw].count;
+      normalizedDates[norm].occ+=dates[raw].occ;
+    });
+    const sorted=Object.keys(normalizedDates).sort();
+    if(!sorted.length){el.innerHTML='<div style="color:var(--text3)">No data in database.</div>';return;}
+    el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.5rem">
+      ${sorted.map(d=>`<div style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:.5rem .7rem;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-family:var(--fm);font-size:.8rem;color:var(--text)">${d}</span>
+        <span style="font-size:.7rem;color:var(--text3)">${normalizedDates[d].occ.toLocaleString()} rows</span>
+      </div>`).join('')}
+    </div><div style="margin-top:.7rem;font-size:.75rem;color:var(--text3)">${sorted.length} dates · ${snap.size.toLocaleString()} total summary records</div>`;
+  }catch(e){el.innerHTML='<div style="color:var(--red)">Error: '+e.message+'</div>';}
+}
+
+let deleteSnap=null;
+async function previewDelete(){
+  const from=document.getElementById('del-from').value; // YYYY-MM-DD from input
+  const to=document.getElementById('del-to').value;
+  if(!from||!to){alert('Please select both From and To dates.');return;}
+  if(from>to){alert('From date must be before or equal To date.');return;}
+  const el=document.getElementById('del-preview');
+  const info=document.getElementById('del-preview-info');
+  const st=document.getElementById('del-status');
+  st.innerHTML='';
+  info.textContent='Scanning database — please wait…';el.style.display='block';
+  document.getElementById('del-confirm-btn').style.display='none';
+  try{
+    // Fetch ALL records and filter client-side
+    // This handles ANY date format stored (YYYY-MM-DD, 18-Mar-26, DD/MM/YYYY etc)
+    const fullSnap=await db.collection('production_data').get();
+    const matched=fullSnap.docs.filter(d=>{
+      const raw=d.data().date||'';
+      const norm=normalizeDate(raw)||raw; // normalize to YYYY-MM-DD for comparison
+      return norm>=from && norm<=to;
+    });
+    deleteSnap={docs:matched,empty:matched.length===0};
+    const dates=[...new Set(matched.map(d=>{
+      const raw=d.data().date||'';
+      return normalizeDate(raw)||raw;
+    }))].sort();
+    const totalOcc=matched.reduce((s,d)=>s+(+(d.data().occurrences||1)),0);
+    if(!matched.length){
+      info.innerHTML='<span style="color:var(--green)">✓ No records found for this date range — nothing to delete.</span>';
+    } else {
+      info.innerHTML=`<span style="color:var(--red)">⚠ Found <strong>${matched.length}</strong> summary records across <strong>${dates.length}</strong> date(s) (${totalOcc.toLocaleString()} original rows):<br><strong>${dates.join(' · ')}</strong></span>`;
+      document.getElementById('del-confirm-btn').style.display='inline-block';
+    }
+  }catch(e){info.innerHTML='<span style="color:var(--red)">Error: '+e.message+'</span>';}
+}
+
+async function confirmDelete(){
+  if(!deleteSnap||deleteSnap.empty)return;
+  const btn=document.getElementById('del-confirm-btn');
+  const st=document.getElementById('del-status');
+  btn.textContent='Deleting…';btn.disabled=true;
+  try{
+    const CHUNK=400;const docs=deleteSnap.docs;let deleted=0;
+    for(let i=0;i<docs.length;i+=CHUNK){
+      const batch=db.batch();
+      docs.slice(i,i+CHUNK).forEach(d=>batch.delete(d.ref));
+      await batch.commit();deleted+=Math.min(CHUNK,docs.length-i);
+    }
+    // Remove from local allData too
+    const delDates=new Set(docs.map(d=>d.data().date));
+    allData=allData.filter(r=>!delDates.has(r.date));
+    updRec();
+    st.innerHTML=`<div class="al ok">✅ Successfully deleted ${deleted} records. Database updated.</div>`;
+    document.getElementById('del-preview').style.display='none';
+    deleteSnap=null;loadManageSummary();
+  }catch(e){
+    st.innerHTML=`<div class="al err">⚠ Error: ${e.message}</div>`;
+  }
+  btn.textContent='⚠ Confirm Delete';btn.disabled=false;
+}
+function cancelDelete(){
+  deleteSnap=null;
+  document.getElementById('del-preview').style.display='none';
+  document.getElementById('del-status').innerHTML='';
+}
+
 function toggleSidebar(){
   const sb=document.getElementById('sidebar');
   const ov=document.getElementById('mob-overlay');
