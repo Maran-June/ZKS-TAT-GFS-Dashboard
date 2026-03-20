@@ -258,6 +258,24 @@ textarea#fb-cfg:focus{outline:none;border-color:var(--accent);}
   .chip,.dr-preset{min-height:34px;display:inline-flex;align-items:center;}
   .nav-i{min-height:44px;}
 }
+/* ── DUPLICATE CHECK MODAL ── */
+#dup-modal{position:fixed;inset:0;background:rgba(0,0,0,.75);display:none;align-items:center;justify-content:center;z-index:8500;backdrop-filter:blur(4px);}
+#dup-modal.open{display:flex;}
+.dup-card{background:var(--bg2);border:1px solid var(--border3);border-radius:14px;padding:1.8rem;width:500px;max-width:95vw;max-height:85vh;overflow-y:auto;}
+.dup-title{font-family:var(--fh);font-size:1.3rem;color:var(--red);margin-bottom:.3rem;}
+.dup-sub{color:var(--text3);font-size:.78rem;margin-bottom:1rem;}
+.dup-dates{background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:.7rem;margin-bottom:1rem;max-height:140px;overflow-y:auto;}
+.dup-date-item{font-family:var(--fm);font-size:.78rem;color:var(--red);padding:.15rem 0;}
+.dup-new{color:var(--green);}
+.dup-choices{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.6rem;margin-bottom:.8rem;}
+.dup-btn{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:.9rem .6rem;text-align:center;cursor:pointer;transition:all .2s;}
+.dup-btn:hover{border-color:var(--accent);}
+.dup-btn .di{font-size:1.4rem;margin-bottom:.3rem;}
+.dup-btn .dl{font-family:var(--fh);font-size:.95rem;color:var(--text);}
+.dup-btn .ds{font-size:.68rem;color:var(--text3);margin-top:.2rem;line-height:1.4;}
+.dup-btn.skip:hover{border-color:var(--green);}
+.dup-btn.replace:hover{border-color:var(--blue);}
+.dup-btn.cancel-dup:hover{border-color:var(--red);}
 /* ── SCROLL ── */
 ::-webkit-scrollbar{width:5px;height:5px;}
 ::-webkit-scrollbar-track{background:var(--bg2);}
@@ -638,6 +656,42 @@ textarea#fb-cfg:focus{outline:none;border-color:var(--accent);}
     </div>
 
   </main>
+</div>
+
+<!-- ════════════════ DUPLICATE CHECK MODAL ════════════════ -->
+<div id="dup-modal">
+  <div class="dup-card">
+    <div class="dup-title">⚠ Duplicate Data Detected</div>
+    <div class="dup-sub">Some dates in your CSV already exist in the database.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:.8rem;">
+      <div style="background:var(--bg3);border-radius:6px;padding:.6rem">
+        <div style="font-size:.68rem;color:var(--red);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.3rem">⚠ Already in database</div>
+        <div id="dup-existing-list" class="dup-dates"></div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:.6rem">
+        <div style="font-size:.68rem;color:var(--green);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.3rem">✓ New dates to add</div>
+        <div id="dup-new-list" class="dup-dates"></div>
+      </div>
+    </div>
+    <div style="font-size:.8rem;color:var(--text2);margin-bottom:.9rem">What would you like to do?</div>
+    <div class="dup-choices">
+      <div class="dup-btn skip" onclick="dupAction('skip')">
+        <div class="di">➕</div>
+        <div class="dl">Skip Duplicates</div>
+        <div class="ds">Only add new dates.<br>Keep existing data.</div>
+      </div>
+      <div class="dup-btn replace" onclick="dupAction('replace')">
+        <div class="di">🔄</div>
+        <div class="dl">Replace</div>
+        <div class="ds">Delete old data for duplicate dates, upload fresh.</div>
+      </div>
+      <div class="dup-btn cancel-dup" onclick="dupAction('cancel')">
+        <div class="di">❌</div>
+        <div class="dl">Cancel</div>
+        <div class="ds">Don't upload anything.</div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ════════════════ DOWNLOAD MODAL ════════════════ -->
@@ -1073,7 +1127,91 @@ function showPrev(rows){
 }
 
 function uzClick(e){if(e.target.tagName==='BUTTON')return;document.getElementById('fi').click();}
-function startUpload(){confirmUp();}
+
+// ── DUPLICATE CHECK ──
+async function startUpload(){
+  if(!pending.length){ust('warn','No data loaded. Please select a CSV file first.');return;}
+  if(demo){confirmUp();return;}
+  // Get unique dates in pending upload
+  const pendingDates=[...new Set(pending.map(r=>r.date))].sort();
+  // Get existing dates from Firebase
+  const btn=document.getElementById('cbtn');
+  btn.textContent='Checking…';btn.disabled=true;
+  try{
+    const snap=await db.collection('production_data')
+      .where('date','in',pendingDates.slice(0,30)) // Firebase 'in' limit is 30
+      .limit(1).get();
+    // For larger date ranges, check in chunks
+    let existingDates=new Set();
+    const chunkSize=30;
+    for(let i=0;i<pendingDates.length;i+=chunkSize){
+      const chunk=pendingDates.slice(i,i+chunkSize);
+      const s=await db.collection('production_data').where('date','in',chunk).get();
+      s.docs.forEach(d=>{if(d.data().date)existingDates.add(d.data().date);});
+    }
+    const dupDates=pendingDates.filter(d=>existingDates.has(d));
+    const newDates=pendingDates.filter(d=>!existingDates.has(d));
+    if(dupDates.length===0){
+      // No duplicates — upload directly
+      btn.textContent='Upload to Firebase';btn.disabled=false;
+      confirmUp();
+    } else {
+      // Show duplicate modal
+      btn.textContent='Upload to Firebase';btn.disabled=false;
+      document.getElementById('dup-existing-list').innerHTML=dupDates.map(d=>`<div class="dup-date-item">⚠ ${d}</div>`).join('');
+      document.getElementById('dup-new-list').innerHTML=newDates.length>0?newDates.map(d=>`<div class="dup-date-item dup-new">✓ ${d}</div>`).join(''):'<div style="color:var(--text3);font-size:.78rem">No new dates — all dates already exist</div>';
+      document.getElementById('dup-modal').classList.add('open');
+    }
+  }catch(e){
+    btn.textContent='Upload to Firebase';btn.disabled=false;
+    // If check fails, proceed with upload anyway
+    ust('warn','⚠ Could not check duplicates — proceeding with upload');
+    confirmUp();
+  }
+}
+
+async function dupAction(action){
+  document.getElementById('dup-modal').classList.remove('open');
+  if(action==='cancel'){
+    ust('info','Upload cancelled.');
+    return;
+  }
+  if(action==='skip'){
+    // Filter pending to only new dates
+    const existingDates=new Set();
+    const snap=await db.collection('production_data').get();
+    snap.docs.forEach(d=>{if(d.data().date)existingDates.add(d.data().date);});
+    const before=pending.length;
+    pending=pending.filter(r=>!existingDates.has(r.date));
+    const skipped=before-pending.length;
+    if(!pending.length){
+      ust('warn','All dates already exist in database. Nothing new to upload.');
+      return;
+    }
+    ust('info',`Skipping ${skipped} duplicate records. Uploading ${pending.length} new records…`);
+    confirmUp();
+  }
+  if(action==='replace'){
+    // Delete existing records for duplicate dates, then upload all
+    ust('info','Deleting old data for duplicate dates…');
+    const pendingDates=[...new Set(pending.map(r=>r.date))];
+    try{
+      // Delete in date chunks
+      const chunkSize=30;
+      for(let i=0;i<pendingDates.length;i+=chunkSize){
+        const chunk=pendingDates.slice(i,i+chunkSize);
+        const snap=await db.collection('production_data').where('date','in',chunk).get();
+        const delBatch=db.batch();
+        snap.docs.forEach(d=>delBatch.delete(d.ref));
+        if(snap.docs.length>0)await delBatch.commit();
+      }
+      ust('info','Old data deleted. Uploading fresh data…');
+      confirmUp();
+    }catch(e){
+      ust('err','⚠ Error deleting old data: '+e.message);
+    }
+  }
+}
 async function confirmUp(){
   if(!pending.length){ust('warn','No data loaded. Please select a CSV file first.');return;}
   const btn=document.getElementById('cbtn');
