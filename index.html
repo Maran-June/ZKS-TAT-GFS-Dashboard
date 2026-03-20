@@ -755,15 +755,24 @@ function connectFirebase(){
   }catch(e){showErr('Init error: '+e.message);}
 }
 function useDemo(){demo=true;allData=genDemo();launch();}
+// ── HARDCODED FIREBASE CONFIG ──
+// No setup screen needed — auto-connects for everyone
+const HARDCODED_CFG={
+  apiKey:"AIzaSyC3Tm-KNq1Fg7DMeIsdeJOS0OaNKodhOKs",
+  authDomain:"zks-tat-gfs-report.firebaseapp.com",
+  projectId:"zks-tat-gfs-report",
+  storageBucket:"zks-tat-gfs-report.firebasestorage.app",
+  messagingSenderId:"601414690133",
+  appId:"1:601414690133:web:2990c1a6dfb96e86bafbdc"
+};
 function autoConnect(){
-  const s=localStorage.getItem('fb_cfg');
-  if(!s)return false;
   try{
-    const cfg=JSON.parse(s);
+    const cfg=HARDCODED_CFG;
     if(!firebase.apps.length)firebase.initializeApp(cfg);
+    else firebase.app();
     db=firebase.firestore();
     launch();return true;
-  }catch(e){return false;}
+  }catch(e){console.error('Firebase init error:',e);return false;}
 }
 function showErr(m){const e=document.getElementById('setup-err');e.textContent='⚠ '+m;e.style.display='block';}
 function launch(){
@@ -1670,7 +1679,11 @@ window.addEventListener('DOMContentLoaded',()=>{
     if(fi)fi.value=F[pg].from;
     if(ti)ti.value=F[pg].to;
   });
-  if(!autoConnect())document.getElementById('setup-modal').style.display='flex';
+  // Auto-connect with hardcoded config — setup modal never shown
+  if(!autoConnect()){
+    // Fallback: show setup modal only if hardcoded config fails
+    document.getElementById('setup-modal').style.display='flex';
+  }
 });
 </script>
 </body>
